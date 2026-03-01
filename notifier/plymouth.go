@@ -21,10 +21,14 @@ func SetupPlymouthNotifier(notifiers *sync.Map, fallbackExec bool) {
 	message := "YubiKey is waiting for a touch..."
 	activeTouchWaits := 0
 
-	// Try to get a D-Bus connection, but don't exit if it fails
+	// Initialize System Bus connection
 	conn, err := dbus.SystemBus()
 	if err != nil {
-		log.Warn("Could not connect to System Bus, will use CLI fallback: ", err)
+		log.Warn("Could not connect to System Bus: ", err)
+		if !fallbackExec {
+			log.Error("D-Bus failed and fallbackExec is disabled. Plymouth notifier will be inactive.")
+			return
+		}
 	} else {
 		defer conn.Close()
 	}
@@ -35,49 +39,56 @@ func SetupPlymouthNotifier(notifiers *sync.Map, fallbackExec bool) {
 		}
 		if value == GPG_OFF || value == U2F_OFF || value == HMAC_OFF {
 			activeTouchWaits--
+			if activeTouchWaits < 0 {
+				activeTouchWaits = 0
+			}
 		}
 
 		if activeTouchWaits > 0 {
-			showPlymouthMessage(conn, message)
+			showPlymouthMessage(conn, message, fallbackExec)
 		} else {
-			hidePlymouthMessage(conn, message)
+			hidePlymouthMessage(conn, message, fallbackExec)
 		}
 	}
 }
 
-// showPlymouthMessage attempts D-Bus first, then falls back to exec
-func showPlymouthMessage(conn *dbus.Conn, msg string) {
+func showPlymouthMessage(conn *dbus.Conn, msg string, fallbackExec bool) {
+	// 1. Try D-Bus if connection exists
 	if conn != nil {
 		obj := conn.Object(plymouthDest, dbus.ObjectPath(plymouthPath))
 		call := obj.Call(plymouthIface+".DisplayMessage", 0, msg)
 		if call.Err == nil {
-			return // Success
+			return
 		}
-		log.Warn("D-Bus DisplayMessage failed, trying CLI: ", call.Err)
+		log.Warn("Plymouth D-Bus DisplayMessage failed: ", call.Err)
 	}
 
-	// Fallback: plymouth display-message --text="msg"
-	cmd := exec.Command("plymouth", "display-message", "--text", msg)
-	if err := cmd.Run(); err != nil {
-		log.Error("Plymouth CLI fallback failed: ", err)
+	// 2. Try CLI Fallback if enabled
+	if fallbackExec {
+		cmd := exec.Command("plymouth", "display-message", "--text", msg)
+		if err := cmd.Run(); err != nil {
+			log.Error("Plymouth CLI fallback failed: ", err)
+		}
 	}
 }
 
-// hidePlymouthMessage attempts D-Bus first, then falls back to exec
-func hidePlymouthMessage(conn *dbus.Conn, msg string) {
+func hidePlymouthMessage(conn *dbus.Conn, msg string, fallbackExec bool) {
+	// 1. Try D-Bus if connection exists
 	if conn != nil {
 		obj := conn.Object(plymouthDest, dbus.ObjectPath(plymouthPath))
 		call := obj.Call(plymouthIface+".HideMessage", 0, msg)
 		if call.Err == nil {
-			return // Success
+			return
 		}
-		log.Warn("D-Bus HideMessage failed, trying CLI: ", call.Err)
+		log.Warn("Plymouth D-Bus HideMessage failed: ", call.Err)
 	}
 
-	// Fallback: plymouth hide-message --text="msg"
-	cmd := exec.Command("plymouth", "hide-message", "--text", msg)
-	if err := cmd.Run(); err != nil {
-		log.Error("Plymouth CLI hide fallback failed: ", err)
+	// 2. Try CLI Fallback if enabled
+	if fallbackExec {
+		cmd := exec.Command("plymouth", "hide-message", "--text", msg)
+		if err := cmd.Run(); err != nil {
+			log.Error("Plymouth CLI hide fallback failed: ", err)
+		}
 	}
 }
 

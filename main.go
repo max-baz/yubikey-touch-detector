@@ -26,6 +26,8 @@ func main() {
 
 	envVerbose := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_VERBOSE"))]
 	envLibnotify := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_LIBNOTIFY"))]
+	envPlymouth := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_PLYMOUTH"))]
+	envPlymouthExec := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_PLYMOUTH_EXEC"))]
 	envStdout := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_STDOUT"))]
 	envNosocket := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_NOSOCKET"))]
 	envDbus := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_DBUS"))]
@@ -33,6 +35,8 @@ func main() {
 	var version bool
 	var verbose bool
 	var libnotify bool
+	var plymouth bool
+	var plymouthExec bool
 	var stdout bool
 	var nosocket bool
 	var dbus bool
@@ -40,6 +44,8 @@ func main() {
 	flag.BoolVar(&version, "version", false, "print version and exit")
 	flag.BoolVar(&verbose, "v", envVerbose, "enable debug logging")
 	flag.BoolVar(&libnotify, "libnotify", envLibnotify, "show desktop notifications using libnotify")
+	flag.BoolVar(&plymouth, "plymouth", envPlymouth, "show boot notifications using plymouth")
+	flag.BoolVar(&plymouthExec, "plymouth-exec", envPlymouthExec, "fallback to running plymouth commands if plymouth D-Bus is not available")
 	flag.BoolVar(&stdout, "stdout", envStdout, "print notifications to stdout")
 	flag.BoolVar(&nosocket, "no-socket", envNosocket, "disable unix socket notifier")
 	flag.BoolVar(&dbus, "dbus", envDbus, "enable dbus server for IPC")
@@ -70,6 +76,9 @@ func main() {
 	}
 	if libnotify {
 		go notifier.SetupLibnotifyNotifier(notifiers)
+	}
+	if plymouth {
+		go notifier.SetupPlymouthNotifier(notifiers, plymouthExec)
 	}
 	if stdout {
 		go notifier.SetupStdoutNotifier(notifiers)
