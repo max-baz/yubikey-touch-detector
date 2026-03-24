@@ -9,3 +9,9 @@ YUBIKEY_TOUCH_DETECTOR_STDOUT=false
 
 # disable Un*x socket notifier
 YUBIKEY_TOUCH_DETECTOR_NOSOCKET=false
+
+# only works with libnotify. configure desktop notifications expiry e.g. 5s
+YUBIKEY_TOUCH_DETECTOR_LIBNOTIFY_EXPIRY=8s
+
+# only works with libnotify. desktop notification are transient
+YUBIKEY_TOUCH_DETECTOR_LIBNOTIFY_EXPIRY=8s

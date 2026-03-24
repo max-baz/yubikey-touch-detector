@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/proglottis/gpgme"
 	log "github.com/sirupsen/logrus"
@@ -29,6 +30,8 @@ func main() {
 	envStdout := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_STDOUT"))]
 	envNosocket := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_NOSOCKET"))]
 	envDbus := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_DBUS"))]
+	envTransient := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_TRANSIENT"))]
+	envExpiry := os.Getenv("YUBIKEY_TOUCH_DETECTOR_EXPIRY")
 
 	var version bool
 	var verbose bool
@@ -36,6 +39,8 @@ func main() {
 	var stdout bool
 	var nosocket bool
 	var dbus bool
+	var transient bool
+	var expiryAsString string
 
 	flag.BoolVar(&version, "version", false, "print version and exit")
 	flag.BoolVar(&verbose, "v", envVerbose, "enable debug logging")
@@ -43,6 +48,8 @@ func main() {
 	flag.BoolVar(&stdout, "stdout", envStdout, "print notifications to stdout")
 	flag.BoolVar(&nosocket, "no-socket", envNosocket, "disable unix socket notifier")
 	flag.BoolVar(&dbus, "dbus", envDbus, "enable dbus server for IPC")
+	flag.StringVar(&expiryAsString, "expiry", envExpiry, "only works with libnotify. configure desktop notifications expiry e.g. 5s")
+	flag.BoolVar(&transient, "transient", envTransient, "only works with libnotify. desktop notifications are transient")
 	flag.Parse()
 
 	if version {
@@ -57,6 +64,15 @@ func main() {
 	log.SetFormatter(&log.TextFormatter{FullTimestamp: true})
 	log.Debug("Starting YubiKey touch detector")
 
+	libnotifyExpiry := time.Duration(0)
+	if expiryAsString != "" {
+		var err error
+		libnotifyExpiry, err = time.ParseDuration(expiryAsString)
+		if err != nil {
+			log.Errorf("Cannot set expiry: %v", err)
+			os.Exit(1)
+		}
+	}
 	exits := &sync.Map{}
 	go setupExitSignalWatch(exits)
 
@@ -69,7 +85,7 @@ func main() {
 		go notifier.SetupUnixSocketNotifier(notifiers, exits)
 	}
 	if libnotify {
-		go notifier.SetupLibnotifyNotifier(notifiers)
+		go notifier.SetupLibnotifyNotifier(notifiers, libnotifyExpiry, transient)
 	}
 	if stdout {
 		go notifier.SetupStdoutNotifier(notifiers)
