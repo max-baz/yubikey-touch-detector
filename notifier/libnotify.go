@@ -3,7 +3,6 @@ package notifier
 import (
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/esiqveland/notify"
 	"github.com/godbus/dbus/v5"
@@ -12,19 +11,16 @@ import (
 )
 
 // SetupLibnotifyNotifier configures a notifier to show all touch requests with libnotify
-func SetupLibnotifyNotifier(notifiers *sync.Map, expiry time.Duration, transient bool) {
+func SetupLibnotifyNotifier(notifiers *sync.Map) {
 	touch := make(chan Message, 10)
 	notifiers.Store("notifier/libnotify", touch)
 
 	notification := notify.Notification{
-		AppName:       "yubikey-touch-detector",
-		AppIcon:       "yubikey-touch-detector",
-		Summary:       "YubiKey is waiting for a touch",
-		ExpireTimeout: expiry,
+		AppName: "yubikey-touch-detector",
+		AppIcon: "yubikey-touch-detector",
+		Summary: "YubiKey is waiting for a touch",
 	}
-	if transient {
-		notification.AddHint(notify.Hint{ID: "transient", Variant: dbus.MakeVariant(true)})
-	}
+	notification.AddHint(notify.Hint{ID: "transient", Variant: dbus.MakeVariant(true)})
 
 	conn, notifier, err := connectDBus(&notification.ReplacesID)
 	if err != nil {
