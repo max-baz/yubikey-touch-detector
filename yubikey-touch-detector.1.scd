@@ -13,12 +13,6 @@ yubikey-touch-detector - detect when a YubiKey is waiting for a touch
 *-libnotify*
 	Show desktop notifications using libnotify.
 
-*-transient*
-	Only works with libnotify. Desktop notifications are transient.
-
-*-expiry*
-	Only works with libnotify. Configue desktop notifications' expiry.
-
 *-no-socket*
 	Disable unix socket notifier.
 
@@ -50,12 +44,6 @@ _YUBIKEY_TOUCH_DETECTOR_STDOUT_
 
 _YUBIKEY_TOUCH_DETECTOR_NOSOCKET_
 	Equivalent to specifying *-no-socket*.
-
-_YUBIKEY_TOUCH_DETECTOR_EXPIRY_
-	Equivalent to specifying *-expiry*.
-
-_YUBIKEY_TOUCH_DETECTOR_TRANSIENT_
-	Equivalent to specifying *-transient*.
 
 # FILES
 
