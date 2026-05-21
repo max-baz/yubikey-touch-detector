@@ -11,3 +11,10 @@ const (
 	HMAC_ON  Message = "MAC_1"
 	HMAC_OFF Message = "MAC_0"
 )
+
+// TouchEvent carries a touch notification together with optional human-readable
+// context describing the process that triggered the request.
+type TouchEvent struct {
+	Type    Message
+	Context string
+}

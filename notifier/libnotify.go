@@ -12,7 +12,7 @@ import (
 
 // SetupLibnotifyNotifier configures a notifier to show all touch requests with libnotify
 func SetupLibnotifyNotifier(notifiers *sync.Map) {
-	touch := make(chan Message, 10)
+	touch := make(chan TouchEvent, 10)
 	notifiers.Store("notifier/libnotify", touch)
 
 	notification := notify.Notification{
@@ -33,12 +33,18 @@ func SetupLibnotifyNotifier(notifiers *sync.Map) {
 	activeTouchWaits := 0
 
 	for {
-		value := <-touch
-		if value == GPG_ON || value == U2F_ON || value == HMAC_ON {
+		event := <-touch
+		if event.Type == GPG_ON || event.Type == U2F_ON || event.Type == HMAC_ON {
 			activeTouchWaits++
+			if event.Context != "" {
+				notification.Body = event.Context
+			}
 		}
-		if value == GPG_OFF || value == U2F_OFF || value == HMAC_OFF {
+		if event.Type == GPG_OFF || event.Type == U2F_OFF || event.Type == HMAC_OFF {
 			activeTouchWaits--
+		}
+		if activeTouchWaits <= 0 {
+			notification.Body = ""
 		}
 		if activeTouchWaits > 0 {
 			id, err := notifier.SendNotification(notification)

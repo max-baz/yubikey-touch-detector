@@ -115,7 +115,7 @@ func initGPGBasedDetectors(notifiers, exits *sync.Map) {
 		return
 	}
 
-	requestGPGCheck := make(chan bool)
+	requestGPGCheck := make(chan string)
 	go detector.CheckGPGOnRequest(requestGPGCheck, notifiers, ctx)
 	go detector.WatchGPG(filesToWatch, requestGPGCheck)
 	go detector.WatchSSH(requestGPGCheck, exits)

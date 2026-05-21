@@ -145,7 +145,7 @@ func runU2FWatcher(devicePath string, notifiers *sync.Map) {
 			}
 			if lastMessage != notifier.U2F_OFF {
 				notifiers.Range(func(_, v interface{}) bool {
-					v.(chan notifier.Message) <- notifier.U2F_OFF
+					v.(chan notifier.TouchEvent) <- notifier.TouchEvent{Type: notifier.U2F_OFF}
 					return true
 				})
 			}
@@ -171,7 +171,7 @@ func runU2FWatcher(devicePath string, notifiers *sync.Map) {
 			// Signify U2F_ON if this is the first time we receive it
 			if lastMessage != notifier.U2F_ON {
 				notifiers.Range(func(_, v interface{}) bool {
-					v.(chan notifier.Message) <- notifier.U2F_ON
+					v.(chan notifier.TouchEvent) <- notifier.TouchEvent{Type: notifier.U2F_ON}
 					return true
 				})
 				lastMessage = notifier.U2F_ON
@@ -185,7 +185,7 @@ func runU2FWatcher(devicePath string, notifiers *sync.Map) {
 		u2fOffTimer = time.AfterFunc(u2fOffTimerDuration, func() {
 			if lastMessage != notifier.U2F_OFF {
 				notifiers.Range(func(_, v interface{}) bool {
-					v.(chan notifier.Message) <- notifier.U2F_OFF
+					v.(chan notifier.TouchEvent) <- notifier.TouchEvent{Type: notifier.U2F_OFF}
 					return true
 				})
 				lastMessage = notifier.U2F_OFF

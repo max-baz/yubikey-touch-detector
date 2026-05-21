@@ -12,7 +12,7 @@ import (
 )
 
 // WatchSSH watches for hints that YubiKey is maybe waiting for a touch on a SSH auth request
-func WatchSSH(requestGPGCheck chan bool, exits *sync.Map) {
+func WatchSSH(requestGPGCheck chan string, exits *sync.Map) {
 	socketFile := os.Getenv("SSH_AUTH_SOCK")
 
 	if socketFile == "" {
@@ -94,12 +94,15 @@ func WatchSSH(requestGPGCheck chan bool, exits *sync.Map) {
 			return
 		}
 
-		go proxyUnixSocket(proxyConnection, originalConnection, requestGPGCheck)
-		go proxyUnixSocket(originalConnection, proxyConnection, requestGPGCheck)
+		// Identify the local process that connected to the SSH agent proxy.
+		peerContext := getPeerProcessCmdline(proxyConnection)
+
+		go proxyUnixSocket(proxyConnection, originalConnection, requestGPGCheck, peerContext)
+		go proxyUnixSocket(originalConnection, proxyConnection, requestGPGCheck, "")
 	}
 }
 
-func proxyUnixSocket(reader net.Conn, writer net.Conn, requestGPGCheck chan bool) {
+func proxyUnixSocket(reader net.Conn, writer net.Conn, requestGPGCheck chan string, context string) {
 	defer (func() {
 		reader.Close()
 		writer.Close()
@@ -118,7 +121,7 @@ func proxyUnixSocket(reader net.Conn, writer net.Conn, requestGPGCheck chan bool
 		}
 
 		select {
-		case requestGPGCheck <- true:
+		case requestGPGCheck <- context:
 		default:
 		}
 	}

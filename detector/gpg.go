@@ -12,7 +12,7 @@ import (
 )
 
 // WatchGPG watches for hints that YubiKey is maybe waiting for a touch on a GPG request
-func WatchGPG(filesToWatch []string, requestGPGCheck chan bool) {
+func WatchGPG(filesToWatch []string, requestGPGCheck chan string) {
 	// No need for a buffered channel,
 	// we are interested only in the first event, it's ok to skip all subsequent ones
 	events := make(chan notify.EventInfo)
@@ -34,7 +34,7 @@ func WatchGPG(filesToWatch []string, requestGPGCheck chan bool) {
 		switch event.Event() {
 		case notify.InOpen:
 			select {
-			case requestGPGCheck <- true:
+			case requestGPGCheck <- findGPGContext():
 			default:
 			}
 		default:
@@ -47,7 +47,7 @@ func WatchGPG(filesToWatch []string, requestGPGCheck chan bool) {
 }
 
 // CheckGPGOnRequest checks whether YubiKey is actually waiting for a touch on a GPG request
-func CheckGPGOnRequest(requestGPGCheck chan bool, notifiers *sync.Map, ctx *gpgme.Context) {
+func CheckGPGOnRequest(requestGPGCheck chan string, notifiers *sync.Map, ctx *gpgme.Context) {
 	check := func(response chan error, ctx *gpgme.Context, t *time.Timer) {
 		err := ctx.AssuanSend("LEARN", nil, nil, func(status, args string) error {
 			log.Debugf("AssuanSend/status: %v, %v", status, args)
@@ -58,12 +58,12 @@ func CheckGPGOnRequest(requestGPGCheck chan bool, notifiers *sync.Map, ctx *gpgm
 			response <- err
 		}
 	}
-	for range requestGPGCheck {
+	for context := range requestGPGCheck {
 		resp := make(chan error)
 
 		t := time.AfterFunc(400*time.Millisecond, func() {
 			notifiers.Range(func(_, v interface{}) bool {
-				v.(chan notifier.Message) <- notifier.GPG_ON
+				v.(chan notifier.TouchEvent) <- notifier.TouchEvent{Type: notifier.GPG_ON, Context: context}
 				return true
 			})
 			err := <-resp
@@ -71,7 +71,7 @@ func CheckGPGOnRequest(requestGPGCheck chan bool, notifiers *sync.Map, ctx *gpgm
 				log.Errorf("Agent returned an error: %v", err)
 			}
 			notifiers.Range(func(_, v interface{}) bool {
-				v.(chan notifier.Message) <- notifier.GPG_OFF
+				v.(chan notifier.TouchEvent) <- notifier.TouchEvent{Type: notifier.GPG_OFF}
 				return true
 			})
 		})

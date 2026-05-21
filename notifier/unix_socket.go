@@ -63,17 +63,19 @@ func SetupUnixSocketNotifier(notifiers *sync.Map, exits *sync.Map) {
 		exit <- true
 	}()
 
-	touch := make(chan Message, 10)
+	touch := make(chan TouchEvent, 10)
 	notifiers.Store("notifier/unix_socket", touch)
 
 	touchListeners := make(map[*net.Conn]chan []byte)
 	touchListenersMutex := sync.RWMutex{}
 	go func() {
 		for {
-			value := <-touch
+			event := <-touch
+			// Send only the 5-byte Type string to preserve the documented wire protocol.
+			payload := []byte(event.Type)
 			touchListenersMutex.RLock()
 			for _, listener := range touchListeners {
-				listener <- []byte(value)
+				listener <- payload
 			}
 			touchListenersMutex.RUnlock()
 		}

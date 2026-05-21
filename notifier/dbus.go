@@ -118,14 +118,14 @@ func SetupDbusNotifier(notifiers *sync.Map) {
 	}
 	log.Debug("Connected to dbus session interface ", DBUS_IFACE)
 
-	touch := make(chan Message, 10)
+	touch := make(chan TouchEvent, 10)
 	notifiers.Store("notifier/dbus", touch)
 
 	for {
-		message := <-touch
-		err := props.Set(DBUS_IFACE, messagePropMap[message], messageValueMap[message])
+		event := <-touch
+		err := props.Set(DBUS_IFACE, messagePropMap[event.Type], messageValueMap[event.Type])
 		if err != nil {
-			log.Warn("dbus failed to update property ", messagePropMap[message], ", ", err)
+			log.Warn("dbus failed to update property ", messagePropMap[event.Type], ", ", err)
 		}
 	}
 }

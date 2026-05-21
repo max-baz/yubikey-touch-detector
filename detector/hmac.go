@@ -49,7 +49,7 @@ func WatchHMAC(notifiers *sync.Map) {
 				newMessage := notifier.HMAC_OFF
 				if lastMessage != newMessage {
 					notifiers.Range(func(_, v interface{}) bool {
-						v.(chan notifier.Message) <- newMessage
+						v.(chan notifier.TouchEvent) <- notifier.TouchEvent{Type: newMessage}
 						return true
 					})
 				}
@@ -71,7 +71,7 @@ func WatchHMAC(notifiers *sync.Map) {
 
 					if lastMessage != newMessage {
 						notifiers.Range(func(_, v interface{}) bool {
-							v.(chan notifier.Message) <- newMessage
+							v.(chan notifier.TouchEvent) <- notifier.TouchEvent{Type: newMessage}
 							return true
 						})
 					}
