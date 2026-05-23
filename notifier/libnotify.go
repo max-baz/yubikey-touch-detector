@@ -3,6 +3,7 @@ package notifier
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/esiqveland/notify"
 	"github.com/godbus/dbus/v5"
@@ -10,17 +11,21 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+// postTouchDisplay is how long the "YubiKey was in use" banner stays visible
+// after the operation finishes, so the user has time to read the context.
+const postTouchDisplay = 5 * time.Second
+
 // SetupLibnotifyNotifier configures a notifier to show all touch requests with libnotify
 func SetupLibnotifyNotifier(notifiers *sync.Map) {
 	touch := make(chan TouchEvent, 10)
 	notifiers.Store("notifier/libnotify", touch)
 
 	notification := notify.Notification{
-		AppName: "yubikey-touch-detector",
-		AppIcon: "yubikey-touch-detector",
-		Summary: "YubiKey is waiting for a touch",
+		AppName:       "yubikey-touch-detector",
+		AppIcon:       "yubikey-touch-detector",
+		Summary:       "YubiKey is waiting for a touch",
+		ExpireTimeout: notify.ExpireTimeoutNever,
 	}
-	notification.AddHint(notify.Hint{ID: "transient", Variant: dbus.MakeVariant(true)})
 
 	conn, notifier, err := connectDBus(&notification.ReplacesID)
 	if err != nil {
@@ -32,8 +37,30 @@ func SetupLibnotifyNotifier(notifiers *sync.Map) {
 
 	activeTouchWaits := 0
 
+	sendNotification := func() {
+		id, err := notifier.SendNotification(notification)
+		if err != nil {
+			log.Error("Cannot show notification (will reconnect to DBUS): ", err)
+			notifier.Close()
+			conn.Close()
+			conn, notifier, err = connectDBus(&notification.ReplacesID)
+			if err != nil {
+				log.Error("Failed to reconnect: ", err)
+				return
+			}
+			id, err = notifier.SendNotification(notification)
+			if err != nil {
+				log.Error("Cannot show notification after reconnect: ", err)
+				return
+			}
+		}
+		atomic.CompareAndSwapUint32(&notification.ReplacesID, 0, id)
+	}
+
 	for {
 		event := <-touch
+		prevActiveTouchWaits := activeTouchWaits
+
 		if event.Type == GPG_ON || event.Type == U2F_ON || event.Type == HMAC_ON {
 			activeTouchWaits++
 			if event.Context != "" {
@@ -41,39 +68,22 @@ func SetupLibnotifyNotifier(notifiers *sync.Map) {
 			}
 		}
 		if event.Type == GPG_OFF || event.Type == U2F_OFF || event.Type == HMAC_OFF {
-			activeTouchWaits--
+			if activeTouchWaits > 0 {
+				activeTouchWaits--
+			}
 		}
-		if activeTouchWaits <= 0 {
-			notification.Body = ""
-		}
+
 		if activeTouchWaits > 0 {
-			id, err := notifier.SendNotification(notification)
-			if err != nil {
-				log.Error("Cannot show notification (will reconnect to DBUS): ", err)
-				notifier.Close()
-				conn.Close()
-				conn, notifier, err = connectDBus(&notification.ReplacesID)
-				if err != nil {
-					log.Error("Failed to reconnect: ", err)
-					continue
-				}
-				id, err = notifier.SendNotification(notification)
-				if err != nil {
-					log.Error("Cannot show notification after reconnect: ", err)
-					continue
-				}
-			}
-			atomic.CompareAndSwapUint32(&notification.ReplacesID, 0, id)
-		} else if id := atomic.LoadUint32(&notification.ReplacesID); id != 0 {
-			if _, err := notifier.CloseNotification(id); err != nil {
-				log.Error("Cannot close notification (will reconnect to DBUS): ", err)
-				notifier.Close()
-				conn.Close()
-				conn, notifier, err = connectDBus(&notification.ReplacesID)
-				if err != nil {
-					log.Error("Failed to reconnect: ", err)
-				}
-			}
+			notification.Summary = "YubiKey is waiting for a touch"
+			notification.ExpireTimeout = notify.ExpireTimeoutNever
+			sendNotification()
+		} else if prevActiveTouchWaits > 0 {
+			// Transition from active to idle: keep notification briefly so the
+			// user can see what operation just completed.
+			notification.Summary = "YubiKey was in use"
+			notification.ExpireTimeout = postTouchDisplay
+			sendNotification()
+			notification.Body = ""
 		}
 	}
 }
