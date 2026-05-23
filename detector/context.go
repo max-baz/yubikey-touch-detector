@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path"
 	"strconv"
 	"strings"
@@ -45,23 +46,58 @@ func getPeerProcessCmdline(conn net.Conn) string {
 	return getProcessCmdline(pid)
 }
 
-// gpgContextCandidates lists program names (matched against argv[0] basename)
-// that are likely to be the user-facing process triggering a GPG/SSH operation.
-var gpgContextCandidates = []string{
-	"gpg", "gpg2", "pass", "git", "ssh", "ansible", "ansible-playbook",
-}
-
 // gpgContextExcluded lists background daemons that should not be reported
-// as the triggering process.
+// as the triggering process even when they are connected to gpg-agent.
 var gpgContextExcluded = map[string]bool{
 	"gpg-agent": true,
 	"scdaemon":  true,
 }
 
-// findGPGContext scans /proc for a likely user-facing process that triggered
-// a GPG or SSH operation.  This is best-effort: a concurrent unrelated process
-// with a matching name may be returned instead.
+// unixSocketPeerMap parses `ss -xpn` output to build a map from each Unix
+// socket's inode to its connected peer's inode.
+//
+// ss output format (one line per socket endpoint):
+//
+//	u_str ESTAB 0 0  <local-addr> <local-inode>  <peer-addr> <peer-inode>  [users:(...)]
+//
+// Both the local and peer inode appear at fixed field offsets (indices 5 and 7)
+// regardless of whether the address field is "*" or a socket path.
+func unixSocketPeerMap() (map[uint32]uint32, error) {
+	out, err := exec.Command("ss", "-xpn", "--no-header").Output()
+	if err != nil {
+		return nil, fmt.Errorf("ss: %w", err)
+	}
+
+	result := make(map[uint32]uint32)
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 8 {
+			continue
+		}
+		localIno, err1 := strconv.ParseUint(fields[5], 10, 32)
+		peerIno, err2 := strconv.ParseUint(fields[7], 10, 32)
+		if err1 != nil || err2 != nil || localIno == 0 || peerIno == 0 {
+			continue
+		}
+		result[uint32(localIno)] = uint32(peerIno)
+	}
+	return result, nil
+}
+
+// findGPGContext identifies all non-daemon processes currently connected to
+// gpg-agent by tracing Unix socket peer inodes.
+// Returns one command line per caller, joined by newlines; empty if none found.
 func findGPGContext() string {
+	peerMap, err := unixSocketPeerMap()
+	if err != nil {
+		return ""
+	}
+
+	// Single /proc scan: build inode→pid for every process, and record which
+	// socket inodes belong to gpg-agent.
+	inodeToPID := map[uint32]int32{}
+	gpgAgentInodes := map[uint32]bool{}
+
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return ""
@@ -70,24 +106,59 @@ func findGPGContext() string {
 		if !entry.IsDir() {
 			continue
 		}
-		if _, err := strconv.Atoi(entry.Name()); err != nil {
+		pid, err := strconv.Atoi(entry.Name())
+		if err != nil {
 			continue
 		}
-		cmdlineBytes, err := os.ReadFile(fmt.Sprintf("/proc/%s/cmdline", entry.Name()))
-		if err != nil || len(cmdlineBytes) == 0 {
+
+		comm, _ := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
+		isGPGAgent := strings.TrimSpace(string(comm)) == "gpg-agent"
+
+		fds, err := os.ReadDir(fmt.Sprintf("/proc/%d/fd", pid))
+		if err != nil {
 			continue
 		}
-		cmdline := strings.TrimRight(string(cmdlineBytes), "\x00")
-		fields := strings.Split(cmdline, "\x00")
-		progName := path.Base(fields[0])
-		if gpgContextExcluded[progName] {
-			continue
-		}
-		for _, cand := range gpgContextCandidates {
-			if progName == cand {
-				return strings.Join(fields, " ")
+		for _, fd := range fds {
+			link, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%s", pid, fd.Name()))
+			if err != nil {
+				continue
+			}
+			var inode uint32
+			if _, err := fmt.Sscanf(link, "socket:[%d]", &inode); err != nil {
+				continue
+			}
+			inodeToPID[inode] = int32(pid)
+			if isGPGAgent {
+				gpgAgentInodes[inode] = true
 			}
 		}
 	}
-	return ""
+
+	// For each of gpg-agent's sockets, look up the peer inode and find which
+	// process owns it.
+	var results []string
+	seen := map[int32]bool{}
+	for agentInode := range gpgAgentInodes {
+		peerInode, ok := peerMap[agentInode]
+		if !ok || peerInode == 0 {
+			continue
+		}
+		clientPID, ok := inodeToPID[peerInode]
+		if !ok || seen[clientPID] {
+			continue
+		}
+		seen[clientPID] = true
+
+		cmdline := getProcessCmdline(clientPID)
+		if cmdline == "" {
+			continue
+		}
+		fields := strings.Fields(cmdline)
+		if gpgContextExcluded[path.Base(fields[0])] {
+			continue
+		}
+		results = append(results, cmdline)
+	}
+
+	return strings.Join(results, "\n")
 }
