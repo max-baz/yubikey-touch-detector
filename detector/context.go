@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // getProcessCmdline returns the command line of a process given its PID,
@@ -30,10 +32,12 @@ func getProcessCmdline(pid int32) string {
 func getPeerProcessCmdline(conn net.Conn) string {
 	unixConn, ok := conn.(*net.UnixConn)
 	if !ok {
+		log.Debug("getPeerProcessCmdline: connection is not a UnixConn")
 		return ""
 	}
 	raw, err := unixConn.SyscallConn()
 	if err != nil {
+		log.Debugf("getPeerProcessCmdline: SyscallConn error: %v", err)
 		return ""
 	}
 	var pid int32
@@ -41,9 +45,14 @@ func getPeerProcessCmdline(conn net.Conn) string {
 		ucred, e := syscall.GetsockoptUcred(int(fd), syscall.SOL_SOCKET, syscall.SO_PEERCRED)
 		if e == nil {
 			pid = ucred.Pid
+		} else {
+			log.Debugf("getPeerProcessCmdline: GetsockoptUcred error: %v", e)
 		}
 	})
-	return getProcessCmdline(pid)
+	log.Debugf("getPeerProcessCmdline: peer pid=%d", pid)
+	result := getProcessCmdline(pid)
+	log.Debugf("getPeerProcessCmdline: result=%q", result)
+	return result
 }
 
 // gpgContextExcluded lists background daemons that should not be reported
@@ -53,22 +62,30 @@ var gpgContextExcluded = map[string]bool{
 	"scdaemon":  true,
 }
 
-// unixSocketPeerMap parses `ss -xpn` output to build a map from each Unix
-// socket's inode to its connected peer's inode.
+// ssSocketInfo holds per-socket data parsed from one line of `ss -xpn` output.
+type ssSocketInfo struct {
+	state     string // ESTAB, LISTEN, etc.
+	localAddr string // local socket path, or "" if unnamed ("*")
+	localIno  uint32
+	peerIno   uint32
+	pid       int32  // owning process PID from users field, 0 if not available
+	procName  string // owning process name from users field, "" if not available
+}
+
+// parseSSSockets runs `ss -xpn` and returns one record per socket endpoint.
 //
-// ss output format (one line per socket endpoint):
+// ss output format (one line per endpoint, whitespace-separated):
 //
-//	u_str ESTAB 0 0  <local-addr> <local-inode>  <peer-addr> <peer-inode>  [users:(...)]
+//	<type> <state> <recv-q> <send-q> <local-addr> <local-inode> <peer-addr> <peer-inode> [users:(...)]
 //
-// Both the local and peer inode appear at fixed field offsets (indices 5 and 7)
-// regardless of whether the address field is "*" or a socket path.
-func unixSocketPeerMap() (map[uint32]uint32, error) {
+// The optional users field: users:(("name",pid=NNN,fd=M),...)
+func parseSSSockets() ([]ssSocketInfo, error) {
 	out, err := exec.Command("ss", "-xpn", "--no-header").Output()
 	if err != nil {
 		return nil, fmt.Errorf("ss: %w", err)
 	}
 
-	result := make(map[uint32]uint32)
+	var sockets []ssSocketInfo
 	for _, line := range strings.Split(string(out), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 8 {
@@ -76,89 +93,187 @@ func unixSocketPeerMap() (map[uint32]uint32, error) {
 		}
 		localIno, err1 := strconv.ParseUint(fields[5], 10, 32)
 		peerIno, err2 := strconv.ParseUint(fields[7], 10, 32)
-		if err1 != nil || err2 != nil || localIno == 0 || peerIno == 0 {
+		if err1 != nil || err2 != nil || localIno == 0 {
 			continue
 		}
-		result[uint32(localIno)] = uint32(peerIno)
+		localAddr := fields[4]
+		if localAddr == "*" {
+			localAddr = ""
+		}
+		sock := ssSocketInfo{
+			state:     fields[1],
+			localAddr: localAddr,
+			localIno:  uint32(localIno),
+			peerIno:   uint32(peerIno),
+		}
+		// Parse optional users field: users:(("name",pid=NNN,fd=M),...)
+		for _, f := range fields[8:] {
+			if !strings.HasPrefix(f, "users:") {
+				continue
+			}
+			sock.procName = extractSSName(f)
+			sock.pid = extractSSPID(f)
+			break
+		}
+		sockets = append(sockets, sock)
+	}
+	return sockets, nil
+}
+
+// extractSSPID extracts the first pid value from a ss users field.
+func extractSSPID(users string) int32 {
+	idx := strings.Index(users, "pid=")
+	if idx < 0 {
+		return 0
+	}
+	rest := users[idx+4:]
+	end := strings.IndexAny(rest, ",)")
+	if end < 0 {
+		end = len(rest)
+	}
+	p, err := strconv.ParseInt(rest[:end], 10, 32)
+	if err != nil {
+		return 0
+	}
+	return int32(p)
+}
+
+// extractSSName extracts the first process name from a ss users field.
+func extractSSName(users string) string {
+	// format: users:(("name",pid=NNN,fd=M),...)
+	start := strings.Index(users, `users:(("`)
+	if start < 0 {
+		return ""
+	}
+	rest := users[start+9:]
+	end := strings.Index(rest, `"`)
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
+}
+
+// unixSocketPeerMap returns a map from each Unix socket's local inode to its
+// peer inode. Used by tests.
+func unixSocketPeerMap() (map[uint32]uint32, error) {
+	sockets, err := parseSSSockets()
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[uint32]uint32, len(sockets))
+	for _, s := range sockets {
+		if s.peerIno != 0 {
+			result[s.localIno] = s.peerIno
+		}
 	}
 	return result, nil
 }
 
-// findGPGContext identifies all non-daemon processes currently connected to
-// gpg-agent by tracing Unix socket peer inodes.
-// Returns one command line per caller, joined by newlines; empty if none found.
+// gpgAgentSocketPaths returns the set of Unix socket paths that gpg-agent
+// listens on, queried via gpgconf.
+func gpgAgentSocketPaths() map[string]bool {
+	paths := map[string]bool{}
+	for _, dir := range []string{"agent-socket", "agent-ssh-socket", "agent-extra-socket", "agent-browser-socket"} {
+		out, err := exec.Command("gpgconf", "--list-dirs", dir).Output()
+		if err != nil {
+			continue
+		}
+		p := strings.TrimSpace(string(out))
+		if p != "" {
+			paths[p] = true
+		}
+	}
+	return paths
+}
+
+// findGPGContext identifies processes connected to gpg-agent via ss output.
+//
+// In ss output for Unix sockets, the SERVER side of each accepted connection
+// shows the socket file path as the LOCAL address (fields[4]), even though the
+// accepted socket is anonymous.  The CLIENT side shows local=* but has a
+// readable users field.  The algorithm:
+//
+//  1. Find ss records with state=ESTAB and local-addr matching a gpg-agent
+//     socket path → those are gpg-agent's accepted-socket inodes.
+//  2. For each, look up the peer inode (the client socket) via the peer map
+//     built from all ss records.
+//  3. Find the client's ss record by its local inode → read users field → PID.
+//  4. Read /proc/PID/cmdline for the full command line.
 func findGPGContext() string {
-	peerMap, err := unixSocketPeerMap()
-	if err != nil {
+	agentPaths := gpgAgentSocketPaths()
+	if len(agentPaths) == 0 {
+		log.Debug("findGPGContext: no gpg-agent socket paths found")
 		return ""
 	}
+	log.Debugf("findGPGContext: gpg-agent socket paths: %v", agentPaths)
 
-	// Single /proc scan: build inode→pid for every process, and record which
-	// socket inodes belong to gpg-agent.
-	inodeToPID := map[uint32]int32{}
+	sockets, err := parseSSSockets()
+	if err != nil {
+		log.Debugf("findGPGContext: parseSSSockets error: %v", err)
+		return ""
+	}
+	log.Debugf("findGPGContext: ss returned %d socket records", len(sockets))
+
+	// Build localIno → socket record for fast lookups.
+	byLocalIno := make(map[uint32]*ssSocketInfo, len(sockets))
+	for i := range sockets {
+		s := &sockets[i]
+		byLocalIno[s.localIno] = s
+	}
+
+	// Collect gpg-agent's accepted-socket inodes: ESTAB records whose local
+	// address is one of gpg-agent's socket paths.
 	gpgAgentInodes := map[uint32]bool{}
-
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return ""
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		pid, err := strconv.Atoi(entry.Name())
-		if err != nil {
-			continue
-		}
-
-		comm, _ := os.ReadFile(fmt.Sprintf("/proc/%d/comm", pid))
-		isGPGAgent := strings.TrimSpace(string(comm)) == "gpg-agent"
-
-		fds, err := os.ReadDir(fmt.Sprintf("/proc/%d/fd", pid))
-		if err != nil {
-			continue
-		}
-		for _, fd := range fds {
-			link, err := os.Readlink(fmt.Sprintf("/proc/%d/fd/%s", pid, fd.Name()))
-			if err != nil {
-				continue
-			}
-			var inode uint32
-			if _, err := fmt.Sscanf(link, "socket:[%d]", &inode); err != nil {
-				continue
-			}
-			inodeToPID[inode] = int32(pid)
-			if isGPGAgent {
-				gpgAgentInodes[inode] = true
-			}
+	for i := range sockets {
+		s := &sockets[i]
+		if s.state == "ESTAB" && agentPaths[s.localAddr] {
+			gpgAgentInodes[s.localIno] = true
+			log.Debugf("findGPGContext: gpg-agent accepted socket: localAddr=%q localIno=%d peerIno=%d", s.localAddr, s.localIno, s.peerIno)
 		}
 	}
+	log.Debugf("findGPGContext: gpg-agent has %d ESTAB sockets", len(gpgAgentInodes))
 
-	// For each of gpg-agent's sockets, look up the peer inode and find which
-	// process owns it.
 	var results []string
 	seen := map[int32]bool{}
-	for agentInode := range gpgAgentInodes {
-		peerInode, ok := peerMap[agentInode]
-		if !ok || peerInode == 0 {
+	for agentIno := range gpgAgentInodes {
+		agentSock := byLocalIno[agentIno]
+		clientIno := agentSock.peerIno
+		if clientIno == 0 {
 			continue
 		}
-		clientPID, ok := inodeToPID[peerInode]
-		if !ok || seen[clientPID] {
+		clientSock, ok := byLocalIno[clientIno]
+		if !ok {
+			log.Debugf("findGPGContext: client inode %d not in ss output", clientIno)
+			continue
+		}
+		clientPID := clientSock.pid
+		if clientPID == 0 {
+			log.Debugf("findGPGContext: client inode %d has no pid in ss output", clientIno)
+			continue
+		}
+		if seen[clientPID] {
 			continue
 		}
 		seen[clientPID] = true
-
+		if gpgContextExcluded[clientSock.procName] {
+			log.Debugf("findGPGContext: pid %d (%s) excluded", clientPID, clientSock.procName)
+			continue
+		}
 		cmdline := getProcessCmdline(clientPID)
 		if cmdline == "" {
+			log.Debugf("findGPGContext: pid %d has empty cmdline", clientPID)
 			continue
 		}
 		fields := strings.Fields(cmdline)
 		if gpgContextExcluded[path.Base(fields[0])] {
+			log.Debugf("findGPGContext: pid %d (%s) excluded by cmdline", clientPID, fields[0])
 			continue
 		}
+		log.Debugf("findGPGContext: caller pid=%d cmdline=%q", clientPID, cmdline)
 		results = append(results, cmdline)
 	}
 
-	return strings.Join(results, "\n")
+	result := strings.Join(results, "\n")
+	log.Debugf("findGPGContext: returning %q", result)
+	return result
 }

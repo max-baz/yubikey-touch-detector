@@ -96,6 +96,7 @@ func WatchSSH(requestGPGCheck chan string, exits *sync.Map) {
 
 		// Identify the local process that connected to the SSH agent proxy.
 		peerContext := getPeerProcessCmdline(proxyConnection)
+		log.Debugf("SSH proxy: accepted connection, peerContext=%q", peerContext)
 
 		go proxyUnixSocket(proxyConnection, originalConnection, requestGPGCheck, peerContext)
 		go proxyUnixSocket(originalConnection, proxyConnection, requestGPGCheck, "")
