@@ -87,14 +87,19 @@ func main() {
 }
 
 func initGPGBasedDetectors(notifiers, exits *sync.Map) {
-	ctx, err := gpgme.New()
-	if err != nil {
-		log.Debugf("Cannot initialize GPG context: %v. Disabling GPG and SSH watchers.", err)
-		return
+	newAssuanCtx := func() (*gpgme.Context, error) {
+		ctx, err := gpgme.New()
+		if err != nil {
+			return nil, fmt.Errorf("cannot initialize GPG context: %w", err)
+		}
+		if err := ctx.SetProtocol(gpgme.ProtocolAssuan); err != nil {
+			return nil, fmt.Errorf("cannot initialize Assuan IPC: %w", err)
+		}
+		return ctx, nil
 	}
 
-	if ctx.SetProtocol(gpgme.ProtocolAssuan) != nil {
-		log.Debugf("Cannot initialize Assuan IPC: %v. Disabling GPG and SSH watchers.", err)
+	if _, err := newAssuanCtx(); err != nil {
+		log.Debugf("%v. Disabling GPG and SSH watchers.", err)
 		return
 	}
 
@@ -116,7 +121,7 @@ func initGPGBasedDetectors(notifiers, exits *sync.Map) {
 	}
 
 	requestGPGCheck := make(chan string)
-	go detector.CheckGPGOnRequest(requestGPGCheck, notifiers, ctx)
+	go detector.CheckGPGOnRequest(requestGPGCheck, notifiers, newAssuanCtx)
 	go detector.WatchGPG(filesToWatch, requestGPGCheck)
 	go detector.WatchSSH(requestGPGCheck, exits)
 }
