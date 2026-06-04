@@ -1,0 +1,17 @@
+[Unit]
+Description=YubiKey GPG touch context notifier
+Documentation=https://github.com/max-baz/yubikey-touch-detector/pull/82
+# The plugin retries the socket connection on its own, so strict ordering is not
+# required, but starting after the detector avoids needless retries.
+After=yubikey-touch-detector.service
+Wants=yubikey-touch-detector.service
+
+[Service]
+Type=simple
+# Adjust the path if you installed the script elsewhere.
+ExecStart=%h/.local/bin/yubikey-gpg-notify
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
