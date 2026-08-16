@@ -46,18 +46,45 @@ func WatchGPG(filesToWatch []string, requestGPGCheck chan bool) {
 	}
 }
 
-// CheckGPGOnRequest checks whether YubiKey is actually waiting for a touch on a GPG request
-func CheckGPGOnRequest(requestGPGCheck chan bool, notifiers *sync.Map, ctx *gpgme.Context) {
-	check := func(response chan error, ctx *gpgme.Context, t *time.Timer) {
-		err := ctx.AssuanSend("LEARN", nil, nil, func(status, args string) error {
-			log.Debugf("AssuanSend/status: %v, %v", status, args)
+// CheckGPGOnRequest checks whether YubiKey is actually waiting for a touch on a GPG request.
+// newCtx is called to create or recreate the GPG Assuan context; it is invoked again on
+// error to recover from a stale connection (e.g. after gpg-agent restarts).
+func CheckGPGOnRequest(requestGPGCheck chan bool, notifiers *sync.Map, newCtx func() (*gpgme.Context, error)) {
+	ctx, err := newCtx()
+	if err != nil {
+		log.Errorf("Cannot create GPG Assuan context: %v", err)
+		return
+	}
 
+	reconnect := func() {
+		newCtx2, err := newCtx()
+		if err != nil {
+			log.Errorf("Failed to reconnect GPG context: %v", err)
+			return
+		}
+		ctx = newCtx2
+		log.Debug("GPG context reconnected successfully")
+	}
+
+	assuanLearn := func() error {
+		return ctx.AssuanSend("LEARN", nil, nil, func(status, args string) error {
+			log.Debugf("AssuanSend/status: %v, %v", status, args)
 			return nil
 		})
+	}
+
+	check := func(response chan error, t *time.Timer) {
+		err := assuanLearn()
+		if err != nil {
+			log.Debugf("GPG agent error: %v; reconnecting and retrying", err)
+			reconnect()
+			err = assuanLearn()
+		}
 		if !t.Stop() {
 			response <- err
 		}
 	}
+
 	for range requestGPGCheck {
 		resp := make(chan error)
 
@@ -77,6 +104,6 @@ func CheckGPGOnRequest(requestGPGCheck chan bool, notifiers *sync.Map, ctx *gpgm
 		})
 
 		time.Sleep(200 * time.Millisecond) // wait for GPG to start talking with scdaemon
-		check(resp, ctx, t)
+		check(resp, t)
 	}
 }
