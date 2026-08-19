@@ -48,7 +48,10 @@ _YUBIKEY_TOUCH_DETECTOR_NOSOCKET_
 # FILES
 
 _$XDG_RUNTIME_DIR/yubikey-touch-detector.socket_
-	The socket exposing events shall be created at this locatoin.
+	The socket exposing events on Linux.
+
+_$TMPDIR/yubikey-touch-detector.socket_
+	The socket exposing events on macOS.
 
 # EVENTS
 
