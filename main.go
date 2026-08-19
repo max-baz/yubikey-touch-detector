@@ -5,16 +5,12 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
 
-	"github.com/proglottis/gpgme"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/maximbaz/yubikey-touch-detector/detector"
 	"github.com/maximbaz/yubikey-touch-detector/notifier"
 )
 
@@ -25,21 +21,33 @@ func main() {
 	truthyValues := map[string]bool{"true": true, "yes": true, "1": true}
 
 	envVerbose := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_VERBOSE"))]
+	envNotify := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_NOTIFY"))]
 	envLibnotify := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_LIBNOTIFY"))]
 	envStdout := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_STDOUT"))]
 	envNosocket := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_NOSOCKET"))]
 	envDbus := truthyValues[strings.ToLower(os.Getenv("YUBIKEY_TOUCH_DETECTOR_DBUS"))]
+	notificationTitle := notifier.DefaultNotificationTitle
+	if value, found := os.LookupEnv("YUBIKEY_TOUCH_DETECTOR_NOTIFY_TITLE"); found {
+		notificationTitle = value
+	}
+	notificationBody := notifier.DefaultNotificationBody
+	if value, found := os.LookupEnv("YUBIKEY_TOUCH_DETECTOR_NOTIFY_BODY"); found {
+		notificationBody = value
+	}
 
 	var version bool
 	var verbose bool
-	var libnotify bool
+	var desktopNotify bool
 	var stdout bool
 	var nosocket bool
 	var dbus bool
 
 	flag.BoolVar(&version, "version", false, "print version and exit")
 	flag.BoolVar(&verbose, "v", envVerbose, "enable debug logging")
-	flag.BoolVar(&libnotify, "libnotify", envLibnotify, "show desktop notifications using libnotify")
+	flag.BoolVar(&desktopNotify, "notify", envNotify || envLibnotify, "show desktop notifications")
+	flag.BoolVar(&desktopNotify, "libnotify", envNotify || envLibnotify, "deprecated alias for --notify")
+	flag.StringVar(&notificationTitle, "notify-title", notificationTitle, "desktop notification title")
+	flag.StringVar(&notificationBody, "notify-body", notificationBody, "desktop notification body")
 	flag.BoolVar(&stdout, "stdout", envStdout, "print notifications to stdout")
 	flag.BoolVar(&nosocket, "no-socket", envNosocket, "disable unix socket notifier")
 	flag.BoolVar(&dbus, "dbus", envDbus, "enable dbus server for IPC")
@@ -55,6 +63,13 @@ func main() {
 	}
 
 	log.SetFormatter(&log.TextFormatter{FullTimestamp: true})
+	libnotifyFlagUsed := false
+	flag.Visit(func(value *flag.Flag) {
+		libnotifyFlagUsed = libnotifyFlagUsed || value.Name == "libnotify"
+	})
+	if libnotifyFlagUsed || envLibnotify {
+		log.Warn("--libnotify and YUBIKEY_TOUCH_DETECTOR_LIBNOTIFY are deprecated; use --notify or YUBIKEY_TOUCH_DETECTOR_NOTIFY")
+	}
 	log.Debug("Starting YubiKey touch detector")
 
 	exits := &sync.Map{}
@@ -68,8 +83,8 @@ func main() {
 	if !nosocket {
 		go notifier.SetupUnixSocketNotifier(notifiers, exits)
 	}
-	if libnotify {
-		go notifier.SetupLibnotifyNotifier(notifiers)
+	if desktopNotify {
+		go notifier.SetupDesktopNotifier(notifiers, notificationTitle, notificationBody)
 	}
 	if stdout {
 		go notifier.SetupStdoutNotifier(notifiers)
@@ -78,68 +93,10 @@ func main() {
 		go notifier.SetupDbusNotifier(notifiers)
 	}
 
-	go detector.WatchU2F(notifiers)
-	go detector.WatchHMAC(notifiers)
-	initGPGBasedDetectors(notifiers, exits)
+	initDetectors(notifiers, exits)
 
 	wait := make(chan bool)
 	<-wait
-}
-
-func initGPGBasedDetectors(notifiers, exits *sync.Map) {
-	ctx, err := gpgme.New()
-	if err != nil {
-		log.Debugf("Cannot initialize GPG context: %v. Disabling GPG and SSH watchers.", err)
-		return
-	}
-
-	if ctx.SetProtocol(gpgme.ProtocolAssuan) != nil {
-		log.Debugf("Cannot initialize Assuan IPC: %v. Disabling GPG and SSH watchers.", err)
-		return
-	}
-
-	var gpgPrivateKeysDirPath = path.Join(gpgme.GetDirInfo("homedir"), "private-keys-v1.d")
-	if _, err := os.Stat(gpgPrivateKeysDirPath); err != nil {
-		log.Debugf("Directory '%s' does not exist or cannot stat it\n", gpgPrivateKeysDirPath)
-		return
-	}
-
-	filesToWatch, err := findShadowedPrivateKeys(gpgPrivateKeysDirPath)
-	if err != nil {
-		log.Debugf("Error finding shadowed private keys: %v\n", err)
-		return
-	}
-
-	if len(filesToWatch) == 0 {
-		log.Debugf("No shadowed private keys found.\n")
-		return
-	}
-
-	requestGPGCheck := make(chan bool)
-	go detector.CheckGPGOnRequest(requestGPGCheck, notifiers, ctx)
-	go detector.WatchGPG(filesToWatch, requestGPGCheck)
-	go detector.WatchSSH(requestGPGCheck, exits)
-}
-
-func findShadowedPrivateKeys(folderPath string) ([]string, error) {
-	var result []string
-	err := filepath.WalkDir(folderPath, func(path string, info os.DirEntry, err error) error {
-		if err != nil || info.IsDir() {
-			return err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if strings.Contains(string(data), "shadowed-private-key") {
-			result = append(result, path)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
 }
 
 func setupExitSignalWatch(exits *sync.Map) {

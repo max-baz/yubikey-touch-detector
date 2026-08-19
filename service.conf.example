@@ -1,8 +1,12 @@
 # enable debug logging
 YUBIKEY_TOUCH_DETECTOR_VERBOSE=false
 
-# show desktop notifications using libnotify
-YUBIKEY_TOUCH_DETECTOR_LIBNOTIFY=true
+# show desktop notifications
+YUBIKEY_TOUCH_DETECTOR_NOTIFY=true
+
+# customize desktop notifications
+# YUBIKEY_TOUCH_DETECTOR_NOTIFY_TITLE="Security key required"
+# YUBIKEY_TOUCH_DETECTOR_NOTIFY_BODY="Touch your YubiKey to continue."
 
 # do not print notifications to stdout
 YUBIKEY_TOUCH_DETECTOR_STDOUT=false

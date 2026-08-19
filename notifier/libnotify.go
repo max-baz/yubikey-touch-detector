@@ -38,13 +38,18 @@ func (reference *notificationReference) handleSignal(signal *dbus.Signal) {
 
 // SetupLibnotifyNotifier configures a notifier to show all touch requests with libnotify
 func SetupLibnotifyNotifier(notifiers *sync.Map) {
+	setupLibnotifyNotifier(notifiers, DefaultNotificationTitle, DefaultNotificationBody)
+}
+
+func setupLibnotifyNotifier(notifiers *sync.Map, title, body string) {
 	touch := make(chan Message, 10)
 	notifiers.Store("notifier/libnotify", touch)
 
 	notification := notify.Notification{
 		AppName: "yubikey-touch-detector",
 		AppIcon: "yubikey-touch-detector",
-		Summary: "YubiKey is waiting for a touch",
+		Summary: title,
+		Body:    body,
 	}
 	notification.AddHint(notify.Hint{ID: "transient", Variant: dbus.MakeVariant(true)})
 

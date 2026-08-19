@@ -10,8 +10,14 @@ yubikey-touch-detector - detect when a YubiKey is waiting for a touch
 
 # OPTIONS
 
-*-libnotify*
-	Show desktop notifications using libnotify.
+*-notify*
+	Show desktop notifications.
+
+*-notify-title* _title_
+	Set the desktop notification title. Defaults to "YubiKey is waiting for a touch".
+
+*-notify-body* _body_
+	Set the desktop notification body. Defaults to "Touch your YubiKey to continue."
 
 *-no-socket*
 	Disable unix socket notifier.
@@ -36,8 +42,14 @@ display a visible indicator.
 _YUBIKEY_TOUCH_DETECTOR_VERBOSE_
 	Equivalent to specifying *-v*.
 
-_YUBIKEY_TOUCH_DETECTOR_LIBNOTIFY_
-	Equivalent to specifying *-libnotify*.
+_YUBIKEY_TOUCH_DETECTOR_NOTIFY_
+	Equivalent to specifying *-notify*.
+
+_YUBIKEY_TOUCH_DETECTOR_NOTIFY_TITLE_
+	Equivalent to specifying *-notify-title*.
+
+_YUBIKEY_TOUCH_DETECTOR_NOTIFY_BODY_
+	Equivalent to specifying *-notify-body*.
 
 _YUBIKEY_TOUCH_DETECTOR_STDOUT_
 	Equivalent to specifying *-stdout*.
@@ -48,7 +60,10 @@ _YUBIKEY_TOUCH_DETECTOR_NOSOCKET_
 # FILES
 
 _$XDG_RUNTIME_DIR/yubikey-touch-detector.socket_
-	The socket exposing events shall be created at this locatoin.
+	The socket exposing events on Linux.
+
+_$TMPDIR/yubikey-touch-detector.socket_
+	The socket exposing events on macOS.
 
 # EVENTS
 

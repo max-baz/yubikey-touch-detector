@@ -10,7 +10,7 @@ _See also: [Wiki: Which UI components are already integrated with this app?](htt
 
 ## Installation
 
-**This tool only works on Linux**. If you want to help implementing (at least partial) support for other OS, pull requests are very welcome!
+This tool works on Linux and macOS.
 
 On Arch Linux, you can install it with `pacman -S yubikey-touch-detector`
 
@@ -34,7 +34,7 @@ Finally you can install the app with `go`:
 
 ### Prequisites for building locally
 
-- gpgme
+On Linux, install gpgme:
 
 ```
 sudo apt install libgpgme-dev
@@ -68,10 +68,16 @@ Now try different commands that require a physical touch and see if the app can 
 
 #### Desktop notifications
 
-You can make the app show desktop notifications using `libnotify` if you run it with corresponding flag:
+You can make the app show desktop notifications using the freedesktop notification service on Linux or Notification Center on macOS:
 
 ```
-$ yubikey-touch-detector --libnotify
+$ yubikey-touch-detector --notify
+```
+
+The built-in title and body can be overridden independently:
+
+```
+$ yubikey-touch-detector --notify --notify-title "Security key required" --notify-body "Touch your YubiKey to continue."
 ```
 
 #### Configuring the app
@@ -81,7 +87,9 @@ The app supports the following environment variables and CLI arguments (CLI args
 | Environment var                    | CLI arg       |
 | ---------------------------------- | ------------- |
 | `YUBIKEY_TOUCH_DETECTOR_VERBOSE`   | `-v`          |
-| `YUBIKEY_TOUCH_DETECTOR_LIBNOTIFY` | `--libnotify` |
+| `YUBIKEY_TOUCH_DETECTOR_NOTIFY`    | `--notify`    |
+| `YUBIKEY_TOUCH_DETECTOR_NOTIFY_TITLE` | `--notify-title` |
+| `YUBIKEY_TOUCH_DETECTOR_NOTIFY_BODY` | `--notify-body` |
 | `YUBIKEY_TOUCH_DETECTOR_STDOUT`    | `--stdout`    |
 | `YUBIKEY_TOUCH_DETECTOR_NOSOCKET`  | `--no-socket` |
 | `YUBIKEY_TOUCH_DETECTOR_DBUS`      | `--dbus`      |
@@ -90,13 +98,13 @@ You can configure the systemd service by defining any of these environment varia
 
 #### Integrating with other UI components
 
-First of all, make sure the app is always running (e.g. start a provided systemd user service or socket).
+First of all, make sure the app is always running (e.g. start a provided systemd user service or socket on Linux, or a launch agent on macOS).
 
 Next, in order to integrate the app with other UI components to display a visible indicator, use any of the available notifiers in the `notifier` subpackage.
 
 ##### notifier/unix_socket
 
-`unix_socket` notifier allows anyone to connect to the socket `$XDG_RUNTIME_DIR/yubikey-touch-detector.socket` and receive the following events:
+`unix_socket` notifier allows anyone to connect to `$XDG_RUNTIME_DIR/yubikey-touch-detector.socket` on Linux or `$TMPDIR/yubikey-touch-detector.socket` on macOS and receive the following events:
 
 | event   | description                                         |
 | ------- | --------------------------------------------------- |
@@ -116,6 +124,8 @@ All messages have a fixed length of 5 bytes to simplify the code on the receivin
 Properties on this dbus interface are discoverable through introspection. Properties also emit PropertiesChanged signals to indicate updates and support gobject binding.
 
 ## How it works
+
+On Linux, the detector uses `hidraw`, inotify, and GPG agent checks as described below. On macOS, it watches the unified log for FIDO queue events and CryptoTokenKit time-extension events, verifying FIDO devices against Yubico's USB vendor ID through the I/O Registry.
 
 Your YubiKey may require a physical touch to confirm these operations:
 

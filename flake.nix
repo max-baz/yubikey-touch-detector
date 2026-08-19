@@ -52,7 +52,7 @@
 
             nativeBuildInputs = with pkgs; [ pkg-config scdoc ];
 
-            buildInputs = with pkgs; [ libnotify gpgme ];
+            buildInputs = with pkgs; lib.optionals stdenv.hostPlatform.isLinux [ libnotify gpgme ];
           };
         });
 
@@ -64,7 +64,7 @@
         {
           default = pkgs.mkShell {
             nativeBuildInputs = with pkgs; [ pkg-config scdoc go gopls gotools go-tools ];
-            buildInputs = with pkgs; [ libnotify gpgme ];
+            buildInputs = with pkgs; lib.optionals stdenv.hostPlatform.isLinux [ libnotify gpgme ];
           };
         });
 
