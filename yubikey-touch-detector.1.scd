@@ -25,6 +25,9 @@ yubikey-touch-detector - detect when a YubiKey is waiting for a touch
 *-stdout*
 	Print notifications to stdout.
 
+*-dbus*
+	Support notifications via dbus SessionBus.
+
 *-v*
 	Enable debug logging.
 
@@ -56,6 +59,9 @@ _YUBIKEY_TOUCH_DETECTOR_STDOUT_
 
 _YUBIKEY_TOUCH_DETECTOR_NOSOCKET_
 	Equivalent to specifying *-no-socket*.
+
+_YUBIKEY_TOUCH_DETECTOR_DBUS_
+	Equivalent to specifying *-dbus*.
 
 # FILES
 
