@@ -1,7 +1,7 @@
 default: release
 
 app := "yubikey-touch-detector"
-version := `git describe --tags`
+version := `echo ${YUBIKEY_TOUCH_DETECTOR_VERSION:-$(git describe --tags)}`
 
 release: clean vendor
     mkdir -p dist

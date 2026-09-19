@@ -18,7 +18,7 @@ jobs:
       - uses: taiki-e/install-action@just
       - run: sudo apt-get update
       - run: sudo apt-get -y install libgpgme-dev libnotify-dev
-      - run: just test
+      - run: YUBIKEY_TOUCH_DETECTOR_VERSION=0.0.0-ci just test
 
   lint:
     name: just lint
@@ -32,4 +32,4 @@ jobs:
       - uses: taiki-e/install-action@just
       - run: sudo apt-get update
       - run: sudo apt-get -y install libgpgme-dev libnotify-dev
-      - run: just lint
+      - run: YUBIKEY_TOUCH_DETECTOR_VERSION=0.0.0-ci just lint
