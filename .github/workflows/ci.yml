@@ -1,0 +1,35 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: just test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: taiki-e/install-action@just
+      - run: sudo apt-get update
+      - run: sudo apt-get -y install libgpgme-dev libnotify-dev
+      - run: just test
+
+  lint:
+    name: just lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: taiki-e/install-action@just
+      - run: sudo apt-get update
+      - run: sudo apt-get -y install libgpgme-dev libnotify-dev
+      - run: just lint

@@ -23,8 +23,15 @@ run *args:
 
 build:
     # if you are building from git-archive tarballs, no need to pass -ldflags, the version is already hardcoded in main.go
-    go build -ldflags "-X main.version={{version}}" -o {{app}} main.go
+    go build -ldflags "-X main.version={{version}}" -o {{app}} .
     scdoc < '{{app}}.1.scd' > '{{app}}.1'
+
+lint:
+    test -z "$(gofmt -l $(git ls-files '*.go'))"
+    go vet ./...
+
+test:
+    go test ./...
 
 vendor:
     go mod tidy

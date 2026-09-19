@@ -1,0 +1,101 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BINARY_NAME: ${{ github.event.repository.name }}
+  CGO_ENABLED: 1
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            suffix: x86_64-linux-gnu
+            runner: ubuntu-latest
+          - os: linux
+            arch: arm64
+            suffix: aarch64-linux-gnu
+            runner: ubuntu-24.04-arm
+          - os: darwin
+            arch: amd64
+            suffix: x86_64-darwin
+            runner: macos-15-intel
+          - os: darwin
+            arch: arm64
+            suffix: aarch64-darwin
+            runner: macos-15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install libgpgme-dev libnotify-dev
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          mkdir dist
+          go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" -o "dist/${BINARY_NAME}-${{ matrix.suffix }}" .
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.BINARY_NAME }}-${{ matrix.suffix }}
+          path: dist/${{ env.BINARY_NAME }}-${{ matrix.suffix }}
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    name: Create release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download binaries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ${{ env.BINARY_NAME }}-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum "${BINARY_NAME}"-* > SHA256SUMS
+
+      - name: Create release
+        uses: softprops/action-gh-release@v3
+        with:
+          files: artifacts/*
+          generate_release_notes: true
