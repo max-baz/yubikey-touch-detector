@@ -14,6 +14,7 @@ import (
 )
 
 const macOSLogPredicate = `(processImagePath == "/kernel" AND senderImagePath ENDSWITH "IOHIDFamily") OR (subsystem CONTAINS "CryptoTokenKit")`
+const macOSFIDOQueueDelay = time.Second
 
 type macOSLogEntry struct {
 	ProcessImagePath string `json:"processImagePath"`
@@ -32,6 +33,16 @@ type macOSTouchState struct {
 type macOSDeviceRegistry struct {
 	checkedAt time.Time
 	devices   map[string]bool
+}
+
+type macOSFIDODebouncer struct {
+	mutex      sync.Mutex
+	delay      time.Duration
+	emit       func(notifier.Message)
+	timer      *time.Timer
+	generation uint64
+	pending    bool
+	active     bool
 }
 
 func WatchMacOS(notifiers *sync.Map) {
@@ -53,6 +64,14 @@ func WatchMacOS(notifiers *sync.Map) {
 		activeClients: make(map[string]bool),
 		isYubico:      registry.isYubico,
 	}
+	emit := func(message notifier.Message) {
+		notifiers.Range(func(_, value interface{}) bool {
+			value.(chan notifier.Message) <- message
+			return true
+		})
+	}
+	debouncer := newMacOSFIDODebouncer(macOSFIDOQueueDelay, emit)
+	defer debouncer.close()
 	scanner := bufio.NewScanner(stdout)
 	for scanner.Scan() {
 		var entry macOSLogEntry
@@ -60,10 +79,7 @@ func WatchMacOS(notifiers *sync.Map) {
 			continue
 		}
 		for _, message := range state.messages(entry) {
-			notifiers.Range(func(_, value interface{}) bool {
-				value.(chan notifier.Message) <- message
-				return true
-			})
+			debouncer.handle(message)
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -72,6 +88,63 @@ func WatchMacOS(notifiers *sync.Map) {
 	}
 	if err := cmd.Wait(); err != nil {
 		log.Error("macOS unified log stream stopped: ", err)
+	}
+}
+
+func newMacOSFIDODebouncer(delay time.Duration, emit func(notifier.Message)) *macOSFIDODebouncer {
+	return &macOSFIDODebouncer{delay: delay, emit: emit}
+}
+
+func (debouncer *macOSFIDODebouncer) handle(message notifier.Message) {
+	if message != notifier.U2F_ON && message != notifier.U2F_OFF {
+		debouncer.emit(message)
+		return
+	}
+
+	debouncer.mutex.Lock()
+	defer debouncer.mutex.Unlock()
+
+	if message == notifier.U2F_ON {
+		if debouncer.pending || debouncer.active {
+			return
+		}
+		debouncer.pending = true
+		debouncer.generation++
+		generation := debouncer.generation
+		debouncer.timer = time.AfterFunc(debouncer.delay, func() {
+			debouncer.mutex.Lock()
+			defer debouncer.mutex.Unlock()
+			if !debouncer.pending || debouncer.generation != generation {
+				return
+			}
+			debouncer.pending = false
+			debouncer.active = true
+			debouncer.timer = nil
+			debouncer.emit(notifier.U2F_ON)
+		})
+		return
+	}
+
+	debouncer.generation++
+	debouncer.pending = false
+	if debouncer.timer != nil {
+		debouncer.timer.Stop()
+		debouncer.timer = nil
+	}
+	if debouncer.active {
+		debouncer.active = false
+		debouncer.emit(notifier.U2F_OFF)
+	}
+}
+
+func (debouncer *macOSFIDODebouncer) close() {
+	debouncer.mutex.Lock()
+	defer debouncer.mutex.Unlock()
+	debouncer.generation++
+	debouncer.pending = false
+	if debouncer.timer != nil {
+		debouncer.timer.Stop()
+		debouncer.timer = nil
 	}
 }
 
