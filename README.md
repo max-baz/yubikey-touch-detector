@@ -141,22 +141,21 @@ See `detector/u2f.go` for more info on implementation details, the source code i
 
 ### Detecting gpg operations
 
-This detection is based on a "busy check" - when the card is busy (i.e. `gpg --card-status` hangs), it is assumed that it is waiting on a touch. This of course leads to false positives, when the card is busy for other reasons, but it is a good guess anyway.
+The detector runs as a transparent proxy on the normal `gpg-agent` socket and observes Assuan operations using private keys stored on a smartcard. It does not retain or log operation payloads.
 
-In order to not run the `gpg --card-status` indefinitely (which leads to YubiKey be constantly blinking), the check is being performed only after any shadowed private key files inside `$GNUPGHOME/private-keys-v1.d/*` are opened (the app is thus watching for `OPEN` events on those files).
+Only the oldest active smartcard operation is checked. Operations queued behind it begin their check only after reaching the front of the queue, preventing a burst of cached signing operations from being mistaken for multiple touch requests. Time spent in a Pinentry prompt is excluded when the agent reports the Pinentry process.
+
+A notification is shown when the front operation remains pending after this filtering. This is still a heuristic because `gpg-agent` does not expose the card's actual touch state, but it avoids issuing additional card commands and distinguishes a stalled operation from queued activity.
+
+The proxy preserves Unix file descriptor passing and restores the original agent socket when the detector exits. Shadowed private keys are discovered inside `$GNUPGHOME/private-keys-v1.d/*`.
 
 > If the path to your `private-keys-v1.d` folder differs, define `$GNUPGHOME` environment variable, globally or in `$XDG_CONFIG_HOME/yubikey-touch-detector/service.conf`.
-
-Since v1.11.0 we started using `gpgme` to perform some operations above:
-
-- we are now using Assuan protocol to query card status, instead of spawning `gpg --card-status` processes.
-- we are now querying path to `$GNUPGHOME` from `gpgme`.
 
 ### Detecting ssh operations
 
 The requests performed on a local host will be captured by the `gpg` detector. However, in order to detect the use of forwarded `ssh-agent` on a remote host, an additional detector was introduced.
 
-This detector runs as a proxy on the `$SSH_AUTH_SOCK`, it listens to all communications with that socket and starts a `gpg --card-status` check in case an event was captured.
+This detector runs as a proxy on the `$SSH_AUTH_SOCK`, listens to communications with that socket, and starts an independent card busy check when an event is captured.
 
 ### Detecting HMAC operations
 

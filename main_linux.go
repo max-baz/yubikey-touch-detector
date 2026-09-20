@@ -20,17 +20,6 @@ func initDetectors(notifiers, exits *sync.Map) {
 }
 
 func initGPGBasedDetectors(notifiers, exits *sync.Map) {
-	ctx, err := gpgme.New()
-	if err != nil {
-		log.Debugf("Cannot initialize GPG context: %v. Disabling GPG and SSH watchers.", err)
-		return
-	}
-
-	if ctx.SetProtocol(gpgme.ProtocolAssuan) != nil {
-		log.Debugf("Cannot initialize Assuan IPC: %v. Disabling GPG and SSH watchers.", err)
-		return
-	}
-
 	var gpgPrivateKeysDirPath = path.Join(gpgme.GetDirInfo("homedir"), "private-keys-v1.d")
 	if _, err := os.Stat(gpgPrivateKeysDirPath); err != nil {
 		log.Debugf("Directory '%s' does not exist or cannot stat it\n", gpgPrivateKeysDirPath)
@@ -48,10 +37,7 @@ func initGPGBasedDetectors(notifiers, exits *sync.Map) {
 		return
 	}
 
-	requestGPGCheck := make(chan bool)
-	go detector.CheckGPGOnRequest(requestGPGCheck, notifiers, ctx)
-	go detector.WatchGPG(filesToWatch, requestGPGCheck)
-	go detector.WatchSSH(requestGPGCheck, exits)
+	go detector.WatchGPG(filesToWatch, notifiers, exits)
 }
 
 func findShadowedPrivateKeys(folderPath string) ([]string, error) {
