@@ -6,11 +6,10 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unsafe"
 
 	"github.com/rjeczalik/notify"
 	log "github.com/sirupsen/logrus"
-	"github.com/vtolstov/go-ioctl"
+	"golang.org/x/sys/unix"
 
 	"github.com/maximbaz/yubikey-touch-detector/notifier"
 )
@@ -35,18 +34,6 @@ const (
 	HID_GLOBAL_ITEM_TAG_USAGE_PAGE = 0
 	HID_LOCAL_ITEM_TAG_USAGE       = 0
 )
-
-var (
-	// https://github.com/torvalds/linux/blob/master/include/uapi/linux/hidraw.h
-	HIDIOCGRDESCSIZE = ioctl.IOR('H', 1, 4)
-	HIDIOCGRDESC     = ioctl.IOR('H', 2, unsafe.Sizeof(hidrawDescriptor{}))
-)
-
-// https://github.com/torvalds/linux/blob/master/include/uapi/linux/hidraw.h
-type hidrawDescriptor struct {
-	Size  uint32
-	Value [4096]uint8
-}
 
 type u2fWatcherEvent struct {
 	id         uint64
@@ -158,16 +145,14 @@ func isFidoU2FDevice(devicePath string) bool {
 	}
 	defer device.Close()
 
-	var size uint32
-	err = ioctl.IOCTL(device.Fd(), HIDIOCGRDESCSIZE, uintptr(unsafe.Pointer(&size)))
+	size, err := unix.IoctlGetUint32(int(device.Fd()), unix.HIDIOCGRDESCSIZE)
 	if err != nil {
 		log.Warnf("Cannot get descriptor size for device '%v': %v", devicePath, err)
 		return false
 	}
 
-	data := hidrawDescriptor{Size: size}
-	err = ioctl.IOCTL(device.Fd(), HIDIOCGRDESC, uintptr(unsafe.Pointer(&data)))
-	if err != nil {
+	data := unix.HIDRawReportDescriptor{Size: size}
+	if err := unix.IoctlHIDGetDesc(int(device.Fd()), &data); err != nil {
 		log.Warnf("Cannot get descriptor for device '%v': %v", devicePath, err)
 		return false
 	}

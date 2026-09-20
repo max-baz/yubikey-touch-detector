@@ -32,27 +32,21 @@ Alternatively you can download the latest release from the [GitHub releases](htt
 
 Finally you can install the app with `go`:
 
-### Prequisites for building locally
+### Prerequisites for building locally
 
-On Linux, install gpgme:
+Building from source requires Go 1.26 or later. On Linux, install gpgme:
 
 ```
 sudo apt install libgpgme-dev
 ```
 
-- For Go <1.17
+Install the latest release with:
 
 ```
-$ go get -u github.com/maximbaz/yubikey-touch-detector
+go install github.com/maximbaz/yubikey-touch-detector@latest
 ```
 
-- For [Go >1.17](https://go.dev/doc/go-get-install-deprecation):
-
-```
-$ go install github.com/maximbaz/yubikey-touch-detector@latest
-```
-
-This places the binary in your `$GOPATH/bin` folder, as well as the sources in `$GOPATH/src` for you to use the detection functions in your own code.
+This places the binary in your `$GOBIN` directory, which defaults to `$GOPATH/bin`.
 
 ## Usage
 
