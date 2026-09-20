@@ -1,5 +1,10 @@
 package notifier
 
+import (
+	"sort"
+	"strings"
+)
+
 type Message string
 
 // All messages have a fixed length of 5 chars to simplify code on the receiving side
@@ -20,7 +25,7 @@ func newTouchState() *touchState {
 	return &touchState{active: make(map[string]bool)}
 }
 
-func (state *touchState) update(message Message) (bool, bool) {
+func (state *touchState) update(message Message) (bool, bool, bool) {
 	wasActive := len(state.active) > 0
 	var reason string
 	var active bool
@@ -38,12 +43,22 @@ func (state *touchState) update(message Message) (bool, bool) {
 	case HMAC_OFF:
 		reason = "hmac"
 	default:
-		return wasActive, wasActive
+		return wasActive, wasActive, false
 	}
+	wasReasonActive := state.active[reason]
 	if active {
 		state.active[reason] = true
 	} else {
 		delete(state.active, reason)
 	}
-	return wasActive, len(state.active) > 0
+	return wasActive, len(state.active) > 0, wasReasonActive != active
+}
+
+func (state *touchState) reasons() string {
+	reasons := make([]string, 0, len(state.active))
+	for reason := range state.active {
+		reasons = append(reasons, reason)
+	}
+	sort.Strings(reasons)
+	return strings.Join(reasons, ", ")
 }

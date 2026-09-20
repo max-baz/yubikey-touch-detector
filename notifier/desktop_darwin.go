@@ -10,14 +10,25 @@ import (
 )
 
 func SetupDesktopNotifier(notifiers *sync.Map, title, body string) {
+	templates, err := newNotificationTemplates(title, body)
+	if err != nil {
+		log.Error("Cannot initialize desktop notifications: ", err)
+		return
+	}
+
 	touch := make(chan Message, 10)
 	notifiers.Store("notifier/desktop", touch)
 
 	state := newTouchState()
 	for value := range touch {
-		wasActive, isActive := state.update(value)
+		wasActive, isActive, _ := state.update(value)
 		if !wasActive && isActive {
-			if err := showMacOSNotification(title, body); err != nil {
+			renderedTitle, renderedBody, err := templates.render(state.reasons())
+			if err != nil {
+				log.Error("Cannot render desktop notification: ", err)
+				continue
+			}
+			if err := showMacOSNotification(renderedTitle, renderedBody); err != nil {
 				log.Error("Cannot show desktop notification: ", err)
 			}
 		}

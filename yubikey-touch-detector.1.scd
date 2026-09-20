@@ -14,10 +14,12 @@ yubikey-touch-detector - detect when a YubiKey is waiting for a touch
 	Show desktop notifications.
 
 *-notify-title* _title_
-	Set the desktop notification title. Defaults to "YubiKey is waiting for a touch".
+	Set the desktop notification title template. Defaults to "YubiKey is waiting for a touch".
 
 *-notify-body* _body_
-	Set the desktop notification body. Defaults to "Touch your YubiKey to continue."
+	Set the desktop notification body template. Defaults to "Touch your YubiKey to continue ({{.Reasons}})."
+
+The notification title and body use Go template syntax. _{{.Reasons}}_ expands to a sorted, comma-separated list of active event types: _gpg_, _hmac_, and _u2f_.
 
 *-no-socket*
 	Disable unix socket notifier.

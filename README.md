@@ -71,8 +71,10 @@ $ yubikey-touch-detector --notify
 The built-in title and body can be overridden independently:
 
 ```
-$ yubikey-touch-detector --notify --notify-title "Security key required" --notify-body "Touch your YubiKey to continue."
+$ yubikey-touch-detector --notify --notify-title "Security key required: {{.Reasons}}" --notify-body "Touch your YubiKey to continue."
 ```
+
+The title and body are Go templates. `{{.Reasons}}` expands to a sorted, comma-separated list of the active event types (`gpg`, `hmac`, and `u2f`). It can be placed in either field or omitted. The default body is `Touch your YubiKey to continue ({{.Reasons}}).`, allowing notification daemons such as dunst to match the event type.
 
 #### Configuring the app
 

@@ -50,20 +50,53 @@ func TestTouchStateIsIdempotentAndTracksReasons(t *testing.T) {
 		message Message
 		before  bool
 		after   bool
+		changed bool
+		reasons string
 	}{
-		{U2F_ON, false, true},
-		{U2F_ON, true, true},
-		{HMAC_ON, true, true},
-		{U2F_OFF, true, true},
-		{U2F_OFF, true, true},
-		{HMAC_OFF, true, false},
-		{HMAC_OFF, false, false},
+		{U2F_ON, false, true, true, "u2f"},
+		{U2F_ON, true, true, false, "u2f"},
+		{HMAC_ON, true, true, true, "hmac, u2f"},
+		{U2F_OFF, true, true, true, "hmac"},
+		{U2F_OFF, true, true, false, "hmac"},
+		{HMAC_OFF, true, false, true, ""},
+		{HMAC_OFF, false, false, false, ""},
 	}
 	for _, step := range steps {
-		before, after := state.update(step.message)
-		if before != step.before || after != step.after {
-			t.Fatalf("update(%q) = %t, %t, want %t, %t", step.message, before, after, step.before, step.after)
+		before, after, changed := state.update(step.message)
+		if before != step.before || after != step.after || changed != step.changed {
+			t.Fatalf("update(%q) = %t, %t, %t, want %t, %t, %t", step.message, before, after, changed, step.before, step.after, step.changed)
 		}
+		if reasons := state.reasons(); reasons != step.reasons {
+			t.Fatalf("reasons after update(%q) = %q, want %q", step.message, reasons, step.reasons)
+		}
+	}
+}
+
+func TestNotificationTemplates(t *testing.T) {
+	templates, err := newNotificationTemplates("Touch required: {{.Reasons}}", "Reasons: {{.Reasons}}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	title, body, err := templates.render("gpg, u2f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if title != "Touch required: gpg, u2f" || body != "Reasons: gpg, u2f" {
+		t.Fatalf("render() = %q, %q", title, body)
+	}
+}
+
+func TestDefaultNotificationBodyIncludesReasons(t *testing.T) {
+	templates, err := newNotificationTemplates(DefaultNotificationTitle, DefaultNotificationBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, body, err := templates.render("gpg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body != "Touch your YubiKey to continue (gpg)." {
+		t.Fatalf("default body = %q", body)
 	}
 }
 

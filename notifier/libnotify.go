@@ -42,14 +42,18 @@ func SetupLibnotifyNotifier(notifiers *sync.Map) {
 }
 
 func setupLibnotifyNotifier(notifiers *sync.Map, title, body string) {
+	templates, err := newNotificationTemplates(title, body)
+	if err != nil {
+		log.Error("Cannot initialize desktop notifications: ", err)
+		return
+	}
+
 	touch := make(chan Message, 10)
 	notifiers.Store("notifier/libnotify", touch)
 
 	notification := notify.Notification{
 		AppName: "yubikey-touch-detector",
 		AppIcon: "yubikey-touch-detector",
-		Summary: title,
-		Body:    body,
 	}
 	notification.AddHint(notify.Hint{ID: "transient", Variant: dbus.MakeVariant(true)})
 
@@ -77,8 +81,13 @@ func setupLibnotifyNotifier(notifiers *sync.Map, title, body string) {
 			continue
 		case value = <-touch:
 		}
-		wasActive, isActive := state.update(value)
-		if !wasActive && isActive {
+		wasActive, isActive, changed := state.update(value)
+		if isActive && changed {
+			notification.Summary, notification.Body, err = templates.render(state.reasons())
+			if err != nil {
+				log.Error("Cannot render desktop notification: ", err)
+				continue
+			}
 			if err := showNotification(conn, &reference, &notification); err != nil {
 				log.Error("Cannot show notification (will reconnect to DBUS): ", err)
 				newConn, newSignals, err := reconnectDBus(conn, &reference)
