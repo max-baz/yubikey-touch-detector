@@ -62,7 +62,7 @@ func setupLibnotifyNotifier(notifiers *sync.Map, title, body string) {
 		conn.Close()
 	}()
 
-	activeTouchWaits := 0
+	state := newTouchState()
 	reference := notificationReference{}
 
 	for {
@@ -77,13 +77,8 @@ func setupLibnotifyNotifier(notifiers *sync.Map, title, body string) {
 			continue
 		case value = <-touch:
 		}
-		if value == GPG_ON || value == U2F_ON || value == HMAC_ON {
-			activeTouchWaits++
-		}
-		if value == GPG_OFF || value == U2F_OFF || value == HMAC_OFF {
-			activeTouchWaits--
-		}
-		if activeTouchWaits > 0 {
+		wasActive, isActive := state.update(value)
+		if !wasActive && isActive {
 			if err := showNotification(conn, &reference, &notification); err != nil {
 				log.Error("Cannot show notification (will reconnect to DBUS): ", err)
 				newConn, newSignals, err := reconnectDBus(conn, &reference)
@@ -96,7 +91,7 @@ func setupLibnotifyNotifier(notifiers *sync.Map, title, body string) {
 					log.Error("Cannot show notification after reconnect: ", err)
 				}
 			}
-		} else if reference.id != 0 {
+		} else if wasActive && !isActive && reference.id != 0 {
 			if err := closeTrackedNotification(conn, &reference); err != nil {
 				log.Error("Cannot close notification (will reconnect to DBUS): ", err)
 				newConn, newSignals, err := reconnectDBus(conn, &reference)

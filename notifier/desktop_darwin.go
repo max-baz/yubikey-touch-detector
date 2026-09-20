@@ -13,18 +13,10 @@ func SetupDesktopNotifier(notifiers *sync.Map, title, body string) {
 	touch := make(chan Message, 10)
 	notifiers.Store("notifier/desktop", touch)
 
-	activeTouchWaits := 0
+	state := newTouchState()
 	for value := range touch {
-		wasActive := activeTouchWaits > 0
-		switch value {
-		case GPG_ON, U2F_ON, HMAC_ON:
-			activeTouchWaits++
-		case GPG_OFF, U2F_OFF, HMAC_OFF:
-			if activeTouchWaits > 0 {
-				activeTouchWaits--
-			}
-		}
-		if !wasActive && activeTouchWaits > 0 {
+		wasActive, isActive := state.update(value)
+		if !wasActive && isActive {
 			if err := showMacOSNotification(title, body); err != nil {
 				log.Error("Cannot show desktop notification: ", err)
 			}

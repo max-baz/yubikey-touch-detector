@@ -11,3 +11,39 @@ const (
 	HMAC_ON  Message = "MAC_1"
 	HMAC_OFF Message = "MAC_0"
 )
+
+type touchState struct {
+	active map[string]bool
+}
+
+func newTouchState() *touchState {
+	return &touchState{active: make(map[string]bool)}
+}
+
+func (state *touchState) update(message Message) (bool, bool) {
+	wasActive := len(state.active) > 0
+	var reason string
+	var active bool
+	switch message {
+	case GPG_ON:
+		reason, active = "gpg", true
+	case GPG_OFF:
+		reason = "gpg"
+	case U2F_ON:
+		reason, active = "u2f", true
+	case U2F_OFF:
+		reason = "u2f"
+	case HMAC_ON:
+		reason, active = "hmac", true
+	case HMAC_OFF:
+		reason = "hmac"
+	default:
+		return wasActive, wasActive
+	}
+	if active {
+		state.active[reason] = true
+	} else {
+		delete(state.active, reason)
+	}
+	return wasActive, len(state.active) > 0
+}

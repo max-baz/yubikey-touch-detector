@@ -44,6 +44,29 @@ func TestNotificationReferenceIsScopedToOwner(t *testing.T) {
 	}
 }
 
+func TestTouchStateIsIdempotentAndTracksReasons(t *testing.T) {
+	state := newTouchState()
+	steps := []struct {
+		message Message
+		before  bool
+		after   bool
+	}{
+		{U2F_ON, false, true},
+		{U2F_ON, true, true},
+		{HMAC_ON, true, true},
+		{U2F_OFF, true, true},
+		{U2F_OFF, true, true},
+		{HMAC_OFF, true, false},
+		{HMAC_OFF, false, false},
+	}
+	for _, step := range steps {
+		before, after := state.update(step.message)
+		if before != step.before || after != step.after {
+			t.Fatalf("update(%q) = %t, %t, want %t, %t", step.message, before, after, step.before, step.after)
+		}
+	}
+}
+
 func TestNotificationReferenceHandlesClosedSignal(t *testing.T) {
 	owner := ":1.10"
 	closed := &dbus.Signal{

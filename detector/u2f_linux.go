@@ -48,29 +48,102 @@ type hidrawDescriptor struct {
 	Value [4096]uint8
 }
 
+type u2fWatcherEvent struct {
+	id         uint64
+	devicePath string
+	active     bool
+	done       bool
+}
+
+type u2fTouchState struct {
+	active map[uint64]bool
+}
+
+func newU2FTouchState() *u2fTouchState {
+	return &u2fTouchState{active: make(map[uint64]bool)}
+}
+
+func (state *u2fTouchState) update(id uint64, active bool) (notifier.Message, bool) {
+	wasActive := len(state.active) > 0
+	if active {
+		state.active[id] = true
+	} else {
+		delete(state.active, id)
+	}
+	isActive := len(state.active) > 0
+	if wasActive == isActive {
+		return "", false
+	}
+	if isActive {
+		return notifier.U2F_ON, true
+	}
+	return notifier.U2F_OFF, true
+}
+
 // WatchU2F watches when YubiKey is waiting for a touch on a U2F request
 func WatchU2F(notifiers *sync.Map) {
-	checkAndInitWatcher := func(devicePath string) {
-		if isFidoU2FDevice(devicePath) {
-			go runU2FWatcher(devicePath, notifiers)
-		}
-	}
-
 	devicesEvents := initInotifyWatcher("U2F", "/dev", notify.Create)
 	defer notify.Stop(devicesEvents)
 
+	watcherEvents := make(chan u2fWatcherEvent, 32)
+	readyDevices := make(chan string, 10)
+	watchers := make(map[string]uint64)
+	pendingWatchers := make(map[string]bool)
+	state := newU2FTouchState()
+	var nextWatcherID uint64
+
+	publish := func(message notifier.Message) {
+		notifiers.Range(func(_, value interface{}) bool {
+			value.(chan notifier.Message) <- message
+			return true
+		})
+	}
+	startWatcher := func(devicePath string) {
+		if _, exists := watchers[devicePath]; exists {
+			pendingWatchers[devicePath] = true
+			return
+		}
+		delete(pendingWatchers, devicePath)
+		if !isFidoU2FDevice(devicePath) {
+			return
+		}
+		nextWatcherID++
+		watchers[devicePath] = nextWatcherID
+		go runU2FWatcher(devicePath, nextWatcherID, watcherEvents)
+	}
+
 	if devices, err := os.ReadDir("/dev"); err == nil {
 		for _, device := range devices {
-			checkAndInitWatcher(path.Join("/dev", device.Name()))
+			startWatcher(path.Join("/dev", device.Name()))
 		}
 	} else {
 		log.Errorf("Cannot list devices in '/dev' to find connected YubiKeys: %v", err)
 	}
 
-	for event := range devicesEvents {
-		// Give a second for device to initialize before establishing a watcher
-		time.Sleep(1 * time.Second)
-		checkAndInitWatcher(event.Path())
+	for {
+		select {
+		case event, ok := <-devicesEvents:
+			if !ok {
+				return
+			}
+			devicePath := event.Path()
+			go func() {
+				time.Sleep(time.Second)
+				readyDevices <- devicePath
+			}()
+		case devicePath := <-readyDevices:
+			startWatcher(devicePath)
+		case event := <-watcherEvents:
+			if message, changed := state.update(event.id, event.active); changed {
+				publish(message)
+			}
+			if event.done && watchers[event.devicePath] == event.id {
+				delete(watchers, event.devicePath)
+				if pendingWatchers[event.devicePath] {
+					startWatcher(event.devicePath)
+				}
+			}
+		}
 	}
 }
 
@@ -126,70 +199,79 @@ func isFidoU2FDevice(devicePath string) bool {
 	return false
 }
 
-func runU2FWatcher(devicePath string, notifiers *sync.Map) {
+func runU2FWatcher(devicePath string, id uint64, events chan<- u2fWatcherEvent) {
 	device, err := os.Open(devicePath)
 	if err != nil {
 		log.Errorf("Cannot open device '%v' to run U2F watcher: %v", devicePath, err)
+		events <- u2fWatcherEvent{id: id, devicePath: devicePath, done: true}
 		return
 	}
 	defer device.Close()
 
 	payload := make([]byte, 64)
-	lastMessage := notifier.U2F_OFF
-	var u2fOffTimer *time.Timer
+	var mutex sync.Mutex
+	var active bool
+	var offTimer *time.Timer
+	var generation uint64
+
+	stop := func() {
+		mutex.Lock()
+		generation++
+		if offTimer != nil {
+			offTimer.Stop()
+			offTimer = nil
+		}
+		active = false
+		events <- u2fWatcherEvent{id: id, devicePath: devicePath, done: true}
+		mutex.Unlock()
+	}
+
 	for {
-		_, err = device.Read(payload)
+		n, err := device.Read(payload)
 		if err != nil {
-			if u2fOffTimer != nil {
-				u2fOffTimer.Stop()
-			}
-			if lastMessage != notifier.U2F_OFF {
-				notifiers.Range(func(_, v interface{}) bool {
-					v.(chan notifier.Message) <- notifier.U2F_OFF
-					return true
-				})
-			}
+			stop()
 			return
+		}
+		if n < 9 {
+			continue
 		}
 
 		val1b := payload[7]
 		val2b := (int(payload[7]) << 8) | int(payload[8])
-		isU2F := payload[4] == CTAPHID_MSG && val2b == U2F_SW_CONDITIONS_NOT_SATISFIED
-		isFIDO2 := payload[4] == CTAPHID_KEEPALIVE && val1b == STATUS_UPNEEDED
+		waiting := payload[4] == CTAPHID_MSG && val2b == U2F_SW_CONDITIONS_NOT_SATISFIED ||
+			payload[4] == CTAPHID_KEEPALIVE && val1b == STATUS_UPNEEDED
 
-		// Cancel previous U2F_OFF timer
-		if u2fOffTimer != nil {
-			u2fOffTimer.Stop()
+		mutex.Lock()
+		generation++
+		currentGeneration := generation
+		if offTimer != nil {
+			offTimer.Stop()
+			offTimer = nil
 		}
-
-		// If an unknown message is received, most probably YubiKey was touched.
-		// But it's possible that some intermediate pings are being sent.
-		// Wait just a tiny little bit more to see if no new U2F_ON messages arrive.
-		u2fOffTimerDuration := 200 * time.Millisecond
-
-		if isU2F || isFIDO2 {
-			// Signify U2F_ON if this is the first time we receive it
-			if lastMessage != notifier.U2F_ON {
-				notifiers.Range(func(_, v interface{}) bool {
-					v.(chan notifier.Message) <- notifier.U2F_ON
-					return true
-				})
-				lastMessage = notifier.U2F_ON
-			}
-
-			// Extend U2F_OFF timer duration because the last message was U2F_ON
-			u2fOffTimerDuration = 2 * time.Second
+		emitOn := waiting && !active
+		if waiting {
+			active = true
 		}
-
-		// Signify U2F_OFF if no new messages arrive soon
-		u2fOffTimer = time.AfterFunc(u2fOffTimerDuration, func() {
-			if lastMessage != notifier.U2F_OFF {
-				notifiers.Range(func(_, v interface{}) bool {
-					v.(chan notifier.Message) <- notifier.U2F_OFF
-					return true
-				})
-				lastMessage = notifier.U2F_OFF
+		if active {
+			duration := 200 * time.Millisecond
+			if waiting {
+				duration = 2 * time.Second
 			}
-		})
+			offTimer = time.AfterFunc(duration, func() {
+				mutex.Lock()
+				if generation != currentGeneration || !active {
+					mutex.Unlock()
+					return
+				}
+				active = false
+				offTimer = nil
+				events <- u2fWatcherEvent{id: id, devicePath: devicePath}
+				mutex.Unlock()
+			})
+		}
+		if emitOn {
+			events <- u2fWatcherEvent{id: id, devicePath: devicePath, active: true}
+		}
+		mutex.Unlock()
 	}
 }
