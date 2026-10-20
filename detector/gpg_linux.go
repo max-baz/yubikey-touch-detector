@@ -22,6 +22,7 @@ import (
 )
 
 const gpgTouchDelay = 400 * time.Millisecond
+const gpgErrorCardRemoved gpgme.ErrorCode = 110
 const maxAssuanLine = 64 * 1024
 
 type gpgOperation struct {
@@ -796,11 +797,25 @@ func watchGPGAgent(files []string, notifications *gpgNotifications, exits *sync.
 }
 
 func checkGPGOnRequest(requestGPGCheck chan bool, notifications *gpgNotifications, ctx *gpgme.Context) {
+	logStatus := func(status, args string) error {
+		log.Debugf("AssuanSend/status: %v, %v", status, args)
+		return nil
+	}
 	check := func(response chan error, timer *time.Timer) {
-		err := ctx.AssuanSend("LEARN", nil, nil, func(status, args string) error {
-			log.Debugf("AssuanSend/status: %v, %v", status, args)
-			return nil
-		})
+		err := ctx.AssuanSend("LEARN", nil, nil, logStatus)
+		var gpgErr gpgme.Error
+		if errors.As(err, &gpgErr) && gpgErr.Code() == gpgErrorCardRemoved {
+			// card unplug/replug requires creating a new session
+			if fresh, newErr := gpgme.New(); newErr == nil {
+				if fresh.SetProtocol(gpgme.ProtocolAssuan) == nil {
+					ctx.Release()
+					ctx = fresh
+					err = ctx.AssuanSend("LEARN", nil, nil, logStatus)
+				} else {
+					fresh.Release()
+				}
+			}
+		}
 		if !timer.Stop() {
 			response <- err
 		}
